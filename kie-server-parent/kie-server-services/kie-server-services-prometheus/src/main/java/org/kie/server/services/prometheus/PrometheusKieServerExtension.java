@@ -14,7 +14,9 @@
  */
 package org.kie.server.services.prometheus;
 
+import java.lang.reflect.Constructor;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -58,11 +60,14 @@ public class PrometheusKieServerExtension implements KieServerExtension {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(PrometheusKieServerExtension.class);
     private static final Boolean disabled = Boolean.parseBoolean(System.getProperty(KieServerConstants.KIE_PROMETHEUS_SERVER_EXT_DISABLED, "true"));
+    private static final String additionalMetrics = System.getProperty(KieServerConstants.KIE_PROMETHEUS_SERVER_EXT_METRICS, "");
+
     private static final String DESCRIPTOR = "org.kie.deployment.desc.location";
     private static PrometheusMetrics METRICS = null;
     
     private KieServerRegistry context;
     private boolean initialized = false;
+    private List<Class> customMetricsClasses;
 
     public static PrometheusMetrics getMetrics() {
         if (METRICS == null) {
@@ -85,6 +90,8 @@ public class PrometheusKieServerExtension implements KieServerExtension {
     public void init(KieServerImpl kieServer, KieServerRegistry registry) {
         this.context = registry;
 
+        customMetricsClasses = getCustomMetricsClassesOfType(getClass().getClassLoader(),
+                                                             getCustomMetricClassNames(additionalMetrics));
         registerDefaultDescriptor();
 
         //Prometheus Monitoring
@@ -129,7 +136,12 @@ public class PrometheusKieServerExtension implements KieServerExtension {
         }
 
         initialized = true;
-        LOGGER.info("{} started", toString());
+        if (customMetricsClasses.isEmpty()) {
+            LOGGER.info("{} started", toString());
+        } else {
+            LOGGER.info( toString() + " started with custom metrics classes: " + customMetricsClasses);
+        }
+
     }
 
     protected void registerDefaultDescriptor() {
@@ -217,5 +229,55 @@ public class PrometheusKieServerExtension implements KieServerExtension {
             messages.add(new Message(Severity.INFO, getExtensionName() + " is alive"));
         }
         return messages;
+    }
+
+    public boolean hasCustomMetrics() {
+        return !customMetricsClasses.isEmpty();
+    }
+
+    public <T> List<Class<T>> getCustomMetricsClassesOfType(Class<T> clazz) {
+        List<Class<T>> customMetricsTargets = new ArrayList<>();
+        for (Class c : customMetricsClasses) {
+            Class[] interfaces = c.getInterfaces();
+            for (Class i : interfaces) {
+                if (clazz.isAssignableFrom(i)) {
+                    customMetricsTargets.add(c);
+                }
+            }
+        }
+        return customMetricsTargets;
+    }
+
+    public <T> List<T> instantiateCustomMetrics(Class<T> clazz, Class[] cTorClasses, Object[] cTorParams) {
+        List<T> customMetricsTargets = new ArrayList<>();
+        for (Class<T> c : getCustomMetricsClassesOfType(clazz)) {
+            try {
+                Constructor<T> cTor = c.getConstructor(cTorClasses);
+                customMetricsTargets.add(cTor.newInstance(cTorParams));
+            } catch (Exception e) {
+                LOGGER.warn("Couldn't instantiate custom metrics class " + c);
+            }
+        }
+        return customMetricsTargets;
+    }
+
+
+    private List<String> getCustomMetricClassNames(String csvCustomClassList) {
+        String[] fullyQualifiedClassNames  = csvCustomClassList.split(",");
+        return Arrays.asList(fullyQualifiedClassNames);
+    }
+
+    private List<Class> getCustomMetricsClassesOfType(ClassLoader classLoader, List<String> classNames) {
+        List<Class> customMetrics = new ArrayList<>();
+        for (String className: classNames) {
+            try {
+                Class<?> cl = classLoader.loadClass(className);
+                customMetrics.add(cl);
+                LOGGER.debug("Added custom metrics class " + cl);
+            } catch (NoClassDefFoundError | ClassNotFoundException e) {
+                LOGGER.warn("No such Prometheus metrics class " + className + " found on classpath");
+            }
+        }
+        return customMetrics;
     }
 }

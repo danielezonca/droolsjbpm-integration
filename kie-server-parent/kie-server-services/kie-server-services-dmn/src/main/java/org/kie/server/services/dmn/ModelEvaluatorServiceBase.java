@@ -27,6 +27,7 @@ import org.kie.dmn.api.core.DMNRuntime;
 import org.kie.dmn.api.core.ast.DecisionNode;
 import org.kie.dmn.api.core.ast.DecisionServiceNode;
 import org.kie.dmn.api.core.ast.InputDataNode;
+import org.kie.dmn.api.core.event.DMNRuntimeEventListener;
 import org.kie.dmn.core.ast.InputDataNodeImpl;
 import org.kie.dmn.core.ast.ItemDefNodeImpl;
 import org.kie.dmn.core.internal.utils.DMNEvaluationUtils;
@@ -44,7 +45,7 @@ import org.kie.server.api.model.dmn.DMNModelInfoList;
 import org.kie.server.api.model.dmn.DMNQNameInfo;
 import org.kie.server.api.model.dmn.DMNResultKS;
 import org.kie.server.api.model.dmn.DMNUnaryTestsInfo;
-import org.kie.server.services.api.KieServerExtension;
+import org.kie.server.services.api.KieContainerInstance;
 import org.kie.server.services.api.KieServerRegistry;
 import org.kie.server.services.impl.KieContainerInstanceImpl;
 import org.kie.server.services.impl.locator.ContainerLocatorProvider;
@@ -162,11 +163,19 @@ public class ModelEvaluatorServiceBase {
             KieSession kieSession = kContainer.getKieContainer().newKieSession();
             DMNRuntime dmnRuntime = kieSession.getKieRuntime(DMNRuntime.class);
 
-            KieServerExtension extension = context.getServerExtension(PrometheusKieServerExtension.EXTENSION_NAME);
+            PrometheusKieServerExtension extension = (PrometheusKieServerExtension)context.getServerExtension(PrometheusKieServerExtension.EXTENSION_NAME);
             if (extension != null) {
                 PrometheusMetrics dmnMetrics = PrometheusKieServerExtension.getMetrics();
                 PrometheusMetricsDMNListener listener = new PrometheusMetricsDMNListener(dmnMetrics, kContainer);
                 dmnRuntime.addListener(listener);
+
+                //add custom DMNRuntimeEventListener, if any
+                if (extension.hasCustomMetrics()) {
+                    List<DMNRuntimeEventListener> customListeners = extension.instantiateCustomMetrics(DMNRuntimeEventListener.class,
+                                                                                                       new Class[]{KieContainerInstance.class},
+                                                                                                       new Object[]{kContainer});
+                    customListeners.forEach(l -> dmnRuntime.addListener(l));
+                }
             }
 
             LOG.debug("Will deserialize payload: {}", contextPayload);

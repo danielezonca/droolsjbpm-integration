@@ -15,12 +15,14 @@
 
 package org.kie.server.services.drools;
 
+import java.util.List;
+
 import org.drools.compiler.kie.builder.impl.KieContainerImpl;
 import org.kie.api.builder.model.KieSessionModel;
+import org.kie.api.event.rule.AgendaEventListener;
 import org.kie.api.event.rule.RuleRuntimeEventManager;
 import org.kie.api.runtime.CommandExecutor;
 import org.kie.server.services.api.KieContainerInstance;
-import org.kie.server.services.api.KieServerExtension;
 import org.kie.server.services.api.KieServerRegistry;
 import org.kie.server.services.api.KieSessionLookupHandler;
 import org.kie.server.services.prometheus.PrometheusKieServerExtension;
@@ -46,12 +48,20 @@ public class DroolsKieSessionLookupHandler implements KieSessionLookupHandler {
                 }
             }
 
-            KieServerExtension extension = registry.getServerExtension(PrometheusKieServerExtension.EXTENSION_NAME);
+            PrometheusKieServerExtension extension = (PrometheusKieServerExtension)registry.getServerExtension(PrometheusKieServerExtension.EXTENSION_NAME);
             if (extension != null && ks != null) {
                 RuleRuntimeEventManager eventManager = (RuleRuntimeEventManager)ks;
                 PrometheusMetrics metrics = PrometheusKieServerExtension.getMetrics();
                 PrometheusMetricsDroolsListener listener = new PrometheusMetricsDroolsListener(metrics, kieSessionId, containerInstance);
                 eventManager.addEventListener(listener);
+
+                //add custom AgendaEventListener, if any
+                if (extension.hasCustomMetrics()) {
+                    List<AgendaEventListener> customListeners = extension.instantiateCustomMetrics(AgendaEventListener.class,
+                                                                                                   new Class[]{PrometheusMetrics.class, String.class, KieContainerInstance.class},
+                                                                                                   new Object[]{metrics, kieSessionId, containerInstance});
+                    customListeners.forEach(l -> eventManager.addEventListener(l));
+                }
             }
             return ks;
         }
